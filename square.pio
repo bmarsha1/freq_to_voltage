@@ -1,0 +1,32 @@
+;.program square
+;.side_set 1 opt
+;nop
+;.wrap_target
+;    set x, 31  side 1
+;on:
+;    nop [7]
+;    jmp x-- on
+;    set x, 31 side 0
+;off:
+;    nop [7]
+;    jmp x-- off
+;.wrap
+
+.program square
+.side_set 1 opt
+.wrap_target
+    nop [7] side 1
+    nop [7]
+    nop [7]
+    nop [7]
+    nop [7]
+    nop [7]
+    nop [1]
+    nop [7] side 0
+    nop [7]
+    nop [7]
+    nop [7]
+    nop [7]
+    nop [7]
+    nop [1]
+.wrap

@@ -1,0 +1,18 @@
+; This program serves to count the rising edges in the reference signal
+
+; The loop is two instructions long, so each count is worth 2 clock cycles
+
+.program ref
+pull block
+.wrap_target
+    mov x, osr ; Set x to the highest value
+    wait 1 pin 0 ; Wait for the signal from counter
+    wait 0 pin 0
+loop:
+    jmp pin exit; Exit the loop if signal is on
+    jmp x-- loop ; jump to the loop, decrement x (if we still have space left in the variable)
+exit:
+    mov isr, x; Push the number of times we counted
+    push
+    irq wait 5 ; Set interrupt 5, wait for gate to service
+.wrap

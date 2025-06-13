@@ -1,0 +1,24 @@
+; This counts rising edges from the input signal
+
+; The output of this program (side set) is used to turn on or off the ref counter pio
+; 1 is disable, 0 is enable
+
+.program counter
+.side_set 1 opt
+pull block side 1
+.wrap_target
+    mov x, osr ; Set x to the highest value minus one to account for the last rising edge that is outside of the loop
+    wait 1 pin 0 ; Wait for the gate
+    wait 0 pin 0
+loop:
+    jmp pin exit side 0; Exit the loop if gate is on
+    wait 0 pin 1; Wait for rising edge of the input
+    wait 1 pin 1
+    jmp x-- loop ; jump to the loop, decrement x (if we still have space left in the variable)
+exit:
+    wait 0 pin 1; Count one more rising edge
+    wait 1 pin 1
+    mov isr, x side 1; Push the number of times we counted
+    push
+    irq wait 4 ; Set interrupt 4, wait for gate to service
+.wrap

@@ -1,0 +1,25 @@
+; This program functions as the gate
+; The gate program does the following in a loop:
+; 1. Waits for a rising edge in the input signal
+; 2. Enables the ref and counter programs
+; 3. Waits until gate time is up
+; 4. Disables the ref and counter programs
+; 5. Waits for the ref and counter programs to complete
+
+; Gate is an inverted signal (off means that the gate is enabled, on means disabled)
+
+; Side set pin mapped to gate
+
+.program gate
+.side_set 1 opt
+    pull block side 1; Load number of pulses for gate time from the TX FIFO
+.wrap_target
+    mov x, osr ; Set up for the loop
+    wait 0 pin 0 ; Wait for a rising edge
+    wait 1 pin 0
+loop:
+    jmp x-- loop side 0; Loop for the set number of clock cycles and disable output (gate on)
+    wait 1 irq 4 side 1;  Wait for the other SMs to finish counting and enable output (gate off)
+    wait 1 irq 5
+    irq wait 0 ; Wait for the system to service interrupt 0
+.wrap
