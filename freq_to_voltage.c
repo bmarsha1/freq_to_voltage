@@ -23,7 +23,7 @@
 #define SQUARE_SM 3
 #define GATE_TIME 100000
 //#define INCLUDE_SQUARE // Comment out to remove test square generator
-#define SQUARE_FREQ_DIVIDER 85000.0F //Generates 85Hz wave
+#define SQUARE_FREQ_DIVIDER 8500.0F //Generates 85Hz wave
 #define I2CERR //I2C error checking
 
 #if PICO_RP2350
