@@ -17,13 +17,16 @@
 #define IN_PIN 21
 #define GATE_PIN 20
 #define CTR_PIN 19
+// #define IN_PIN 16
+// #define GATE_PIN 15
+// #define CTR_PIN 14
 #define GATE_SM 0
 #define CTR_SM 1
 #define REF_SM 2
 #define SQUARE_SM 3
 #define GATE_TIME 100000
 //#define INCLUDE_SQUARE // Comment out to remove test square generator
-#define SQUARE_FREQ_DIVIDER 8500.0F //Generates 85Hz wave
+#define SQUARE_FREQ_DIVIDER 6200.0F //Generates 63Hz wave
 #define I2CERR //I2C error checking
 
 #if PICO_RP2350
@@ -37,6 +40,7 @@ uint32_t irq = PIO0_IRQ_0;
 
 uint measured_freq = 0;
 uint32_t time_of_last_measurement = 0;
+uint32_t sensor_errors = 0;
 
 void handle_isr() {
     //Only handle irq0
@@ -50,6 +54,10 @@ void handle_isr() {
         //Calculate the frequency
         measured_freq = floor(input_count * CLOCK_FREQ / ref_count);
         time_of_last_measurement = to_ms_since_boot(get_absolute_time());
+        //printf("Measured freq:%d\n", measured_freq);
+        if(measured_freq < 50 || measured_freq > 150) {
+            sensor_errors++;
+        }
 
         //Clear interrupt
         pio_interrupt_clear(pio, 0);
@@ -146,7 +154,17 @@ bool init_dac(){
 }
 
 bool update_voltage() {
-    if (measured_freq >= 50 && measured_freq <= 150 && (to_ms_since_boot(get_absolute_time()) - time_of_last_measurement) < 2000) {
+    if (sensor_errors > 0) {
+        //write a 0
+        printf("Error: Invalid freq detected\n");
+        sensor_errors = 0;
+        return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
+    } else if(to_ms_since_boot(get_absolute_time() - time_of_last_measurement) < 2000)
+    {
+        printf("Error: No signal from sensor\n");
+        return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
+    }
+    else {
         uint ethanol_percentage = measured_freq - 50;
         //0% ethanol is .5V, 100% ethanol is 4.5V
         float voltage = ethanol_percentage * 4.0F / 100.0F + 0.5F;
@@ -155,11 +173,6 @@ bool update_voltage() {
         if ((counter & 0x1F) == 0)
             printf("freq: %d, eth: %d, voltage: %f, dac: %d\n", measured_freq, ethanol_percentage, voltage, dac_val);
         return dev_mcp4728_set(i2c0, MCP4728_CHA, dac_val);
-    }
-    else {
-        //write a 0
-        printf("Error: Invalid freq or too long since we heard from sensor\n");
-        return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
     }
 }
 
