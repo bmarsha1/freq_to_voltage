@@ -14,9 +14,9 @@
 
 //Input pin, gate pin, signal_counter_pin
 //15, 14, 13
-#define IN_PIN 21
-#define GATE_PIN 20
-#define CTR_PIN 19
+#define IN_PIN 27
+#define GATE_PIN 26
+#define CTR_PIN 25
 // #define IN_PIN 16
 // #define GATE_PIN 15
 // #define CTR_PIN 14
@@ -54,7 +54,7 @@ void handle_isr() {
         //Calculate the frequency
         measured_freq = floor(input_count * CLOCK_FREQ / ref_count);
         time_of_last_measurement = to_ms_since_boot(get_absolute_time());
-        //printf("Measured freq:%d\n", measured_freq);
+        printf("Measured freq:%d\n", measured_freq);
         if(measured_freq < 50 || measured_freq > 150) {
             sensor_errors++;
         }
@@ -159,7 +159,7 @@ bool update_voltage() {
         printf("Error: Invalid freq detected\n");
         sensor_errors = 0;
         return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
-    } else if(to_ms_since_boot(get_absolute_time() - time_of_last_measurement) < 2000)
+    } else if(to_ms_since_boot(get_absolute_time()) - time_of_last_measurement > 2000)
     {
         printf("Error: No signal from sensor\n");
         return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
@@ -177,6 +177,7 @@ bool update_voltage() {
 }
 
 int main() {
+    time_of_last_measurement = to_ms_since_boot(get_absolute_time());
     sys_i2c_init(i2c0, SYS_SDA0, SYS_SCL0, 100000, true);
     bool dac = init_dac();
     stdio_init_all();
