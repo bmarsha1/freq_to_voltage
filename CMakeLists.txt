@@ -29,7 +29,7 @@ set(PICO_BOARD pico2 CACHE STRING "Board type")
 include(pico_sdk_import.cmake)
 
 
-set(PICO_LIB2_PATH /home/benmarshall/Documents/FlexFuel/pico-lib2/)
+set(PICO_LIB2_PATH /Users/benmarshall/Documents/Flex/pico-lib2)
 include(pico_lib2_import.cmake)
 
 project(freq_to_voltage C CXX ASM)
