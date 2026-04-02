@@ -26,10 +26,10 @@
 #define REF_SM 2
 #define SQUARE_SM 3
 #define GATE_TIME 100000
-#define ETH_WINDOW_LEN 100
-#define ETH_WINDOW_INVALID 151
-#define ETH_WINDOW_UNINITIALIZED 152
-#define ETH_WINDOW_ERROR_THRESHOLD 0.25F
+#define WINDOW_LEN 100
+#define WINDOW_INVALID 151
+#define WINDOW_UNINITIALIZED 152
+#define WINDOW_ERROR_THRESHOLD 0.25F
 //#define INCLUDE_SQUARE // Comment out to remove test square generator
 #define SQUARE_FREQ_DIVIDER 6200.0F //Generates 63Hz wave
 #define I2CERR //I2C error checking
@@ -43,35 +43,37 @@
 PIO pio = pio0;
 uint32_t irq = PIO0_IRQ_0;
 
-uint32_t time_of_last_measurement = 0;
-
-uint32_t eth_measurement_window[ETH_WINDOW_LEN];
-uint32_t eth_measurement_window_cur = 0;
+//Measurement vars
+//Keep a rolling avg of measurements, use it to throw out bad readings
+//measurement_freq stores the most recent valid reading
+volatile uint32_t time_of_last_measurement = 0;
+uint32_t measurement_window[WINDOW_LEN];
+uint32_t measurement_window_cur = 0;
+volatile uint32_t measured_freq = 0;
+uint32_t valid_freq_floor = 0;
+uint32_t valid_freq_ceil = 150;
 
 //Adds a frequency to the window
-void put_eth_window(uint32_t freq) {
+void put_window(uint32_t freq) {
     if(freq < 50 || freq > 150) {
-        freq = ETH_WINDOW_INVALID;
-    } else {
-        //frequency is ethanol content + 50
-        freq -= 50;
+        freq = WINDOW_INVALID;
     }
-    if (eth_measurement_window_cur >= ETH_WINDOW_LEN) {
-        eth_measurement_window_cur = 0;
+    if (measurement_window_cur >= WINDOW_LEN) {
+        measurement_window_cur = 0;
     }
-    eth_measurement_window[eth_measurement_window_cur++] = freq;
+    measurement_window[measurement_window_cur++] = freq;
 }
 
 //Calculates the average of the window based on how many measurements are in it
 //Returns zero if there are no measurements
-float avg_eth_window() {
+float avg_window() {
     float sum = 0.0F;
     uint32_t valid = 0;
     // Pause interrupts so the ISR doesn't change data while we are reading it
     uint32_t status = save_and_disable_interrupts(); 
-    for(uint32_t i = 0; i < ETH_WINDOW_LEN; i++) {
-        uint32_t eth = eth_measurement_window[i];
-        if (eth != ETH_WINDOW_INVALID && eth != ETH_WINDOW_UNINITIALIZED) {
+    for(uint32_t i = 0; i < WINDOW_LEN; i++) {
+        uint32_t eth = measurement_window[i];
+        if (eth != WINDOW_INVALID && eth != WINDOW_UNINITIALIZED) {
             sum += eth;
             valid++;
         }
@@ -81,15 +83,15 @@ float avg_eth_window() {
 }
 
 //Calculates the error rate of the window
-float eth_window_error_rate() {
+float window_error_rate() {
     float errors = 0.0F;
     uint32_t total = 0;
     // Pause interrupts so the ISR doesn't change data while we are reading it
     uint32_t status = save_and_disable_interrupts(); 
-    for(uint32_t i = 0; i < ETH_WINDOW_LEN; i++) {
-        uint32_t eth = eth_measurement_window[i];
-        if (eth != ETH_WINDOW_UNINITIALIZED) {
-            errors += eth == ETH_WINDOW_INVALID;
+    for(uint32_t i = 0; i < WINDOW_LEN; i++) {
+        uint32_t eth = measurement_window[i];
+        if (eth != WINDOW_UNINITIALIZED) {
+            errors += eth == WINDOW_INVALID;
             total++;
         }
     }
@@ -98,6 +100,18 @@ float eth_window_error_rate() {
     if (total < 10)
         return 0.0f;
     return total > 0 ? errors / total : 0;
+}
+
+//Updates the valid floor and ceiling
+void update_limits() {
+    float average = avg_window();
+    float delta = average * WINDOW_ERROR_THRESHOLD;
+    float floor_float = average - delta;
+    // Pause interrupts so the ISR doesn't change data while we are reading it
+    uint32_t status = save_and_disable_interrupts(); 
+    valid_freq_floor = floor_float > 0 ? (uint32_t) floor_float : 0;
+    valid_freq_ceil = (uint32_t) (average + delta);
+    restore_interrupts(status);
 }
 
 void handle_isr() {
@@ -115,10 +129,16 @@ void handle_isr() {
         }
     
         //Calculate the frequency
+        //Always write to the window, trust averaging to account for wild readings
         //Use 64 bit integer to avoid overflow
         uint32_t freq = (uint32_t)(((uint64_t)input_count * CLOCK_FREQ) / ref_count);
-        put_eth_window(freq);
-        time_of_last_measurement = to_ms_since_boot(get_absolute_time());
+        put_window(freq);
+
+        //Only send the value if we decide that the measurement is valid
+        if (freq > valid_freq_floor && freq < valid_freq_ceil) {
+            time_of_last_measurement = to_ms_since_boot(get_absolute_time());
+            measured_freq = freq;
+        }
 
         //Clear interrupt
         pio_interrupt_clear(pio, 0);
@@ -215,7 +235,7 @@ bool init_dac(){
 }
 
 bool update_voltage() {
-    if (eth_window_error_rate() > ETH_WINDOW_ERROR_THRESHOLD) {
+    if (window_error_rate() > WINDOW_ERROR_THRESHOLD) {
         //write a 0
         printf("Error: Too many invalid sensor readings\n");
         return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
@@ -225,7 +245,7 @@ bool update_voltage() {
         return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
     }
     else {
-        float ethanol_percentage = avg_eth_window();
+        float ethanol_percentage = measured_freq - 50;
         //0% ethanol is .5V, 100% ethanol is 4.5V
         // Make sure ethanol percentage is within correct range
         if (ethanol_percentage < 0.0f) ethanol_percentage = 0.0f;
@@ -241,13 +261,13 @@ bool update_voltage() {
 
 int main() {
     //Initialize freq window
-    for (uint32_t i = 0; i < ETH_WINDOW_LEN; i++) {
-        eth_measurement_window[i] = ETH_WINDOW_UNINITIALIZED;
+    for (uint32_t i = 0; i < WINDOW_LEN; i++) {
+        measurement_window[i] = WINDOW_UNINITIALIZED;
     }
     time_of_last_measurement = to_ms_since_boot(get_absolute_time());
     sys_i2c_init(i2c0, SYS_SDA0, SYS_SCL0, 100000, true);
-    bool dac = init_dac();
     stdio_init_all();
+    bool dac = init_dac();
     init_reciprocal_ctr_sm();
 #ifdef INCLUDE_SQUARE
     init_square_generator(IN_PIN);
@@ -262,6 +282,7 @@ int main() {
         #else
         update_voltage();
         #endif
+        update_limits();
         counter++;
         sleep_ms(100);
     }
