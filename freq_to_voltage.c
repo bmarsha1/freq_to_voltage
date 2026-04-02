@@ -2,6 +2,7 @@
 #include "pico/stdlib.h"
 #include "pico/time.h"
 #include "hardware/pio.h"
+#include "hardware/sync.h"
 #include <math.h>
 #include "dev_mcp4728.h"
 #include "sys_i2c.h"
@@ -25,39 +26,99 @@
 #define REF_SM 2
 #define SQUARE_SM 3
 #define GATE_TIME 100000
+#define ETH_WINDOW_LEN 100
+#define ETH_WINDOW_INVALID 151
+#define ETH_WINDOW_UNINITIALIZED 152
+#define ETH_WINDOW_ERROR_THRESHOLD 0.25F
 //#define INCLUDE_SQUARE // Comment out to remove test square generator
 #define SQUARE_FREQ_DIVIDER 6200.0F //Generates 63Hz wave
 #define I2CERR //I2C error checking
 
 #if PICO_RP2350
-#define CLOCK_FREQ 150000000.0f
+#define CLOCK_FREQ 150000000
 #else
-#define CLOCK_FREQ 125000000.0f
+#define CLOCK_FREQ 125000000
 #endif
 
 PIO pio = pio0;
 uint32_t irq = PIO0_IRQ_0;
 
-uint measured_freq = 0;
 uint32_t time_of_last_measurement = 0;
-uint32_t sensor_errors = 0;
+
+uint32_t eth_measurement_window[ETH_WINDOW_LEN];
+uint32_t eth_measurement_window_cur = 0;
+
+//Adds a frequency to the window
+void put_eth_window(uint32_t freq) {
+    if(freq < 50 || freq > 150) {
+        freq = ETH_WINDOW_INVALID;
+    } else {
+        //frequency is ethanol content + 50
+        freq -= 50;
+    }
+    if (eth_measurement_window_cur >= ETH_WINDOW_LEN) {
+        eth_measurement_window_cur = 0;
+    }
+    eth_measurement_window[eth_measurement_window_cur++] = freq;
+}
+
+//Calculates the average of the window based on how many measurements are in it
+//Returns zero if there are no measurements
+float avg_eth_window() {
+    float sum = 0.0F;
+    uint32_t valid = 0;
+    // Pause interrupts so the ISR doesn't change data while we are reading it
+    uint32_t status = save_and_disable_interrupts(); 
+    for(uint32_t i = 0; i < ETH_WINDOW_LEN; i++) {
+        uint32_t eth = eth_measurement_window[i];
+        if (eth != ETH_WINDOW_INVALID && eth != ETH_WINDOW_UNINITIALIZED) {
+            sum += eth;
+            valid++;
+        }
+    }
+    restore_interrupts(status);
+    return valid > 0 ? sum / valid : 0;
+}
+
+//Calculates the error rate of the window
+float eth_window_error_rate() {
+    float errors = 0.0F;
+    uint32_t total = 0;
+    // Pause interrupts so the ISR doesn't change data while we are reading it
+    uint32_t status = save_and_disable_interrupts(); 
+    for(uint32_t i = 0; i < ETH_WINDOW_LEN; i++) {
+        uint32_t eth = eth_measurement_window[i];
+        if (eth != ETH_WINDOW_UNINITIALIZED) {
+            errors += eth == ETH_WINDOW_INVALID;
+            total++;
+        }
+    }
+    restore_interrupts(status);
+    //Return 0% error rate if we have less than 10 values
+    if (total < 10)
+        return 0.0f;
+    return total > 0 ? errors / total : 0;
+}
 
 void handle_isr() {
     //Only handle irq0
     if(pio_interrupt_get(pio, 0)) {
-        //Get the data from the SMs1250.002086
+        //Get the data from the SMs
         //Need to subtract from max value since they count down
         uint32_t input_count = 0xffffffff - pio_sm_get_blocking(pio, CTR_SM);
         //Loop takes 2 cycles
         uint32_t ref_count = 2 * (0xffffffff - pio_sm_get_blocking(pio, REF_SM));
+        //This should never happen
+        if (ref_count == 0) {
+            pio_interrupt_clear(pio, 0);
+            return;
+        }
     
         //Calculate the frequency
-        measured_freq = floor(input_count * CLOCK_FREQ / ref_count);
+        //Use 64 bit integer to avoid overflow
+        uint32_t freq = (uint32_t)(((uint64_t)input_count * CLOCK_FREQ) / ref_count);
+        put_eth_window(freq);
         time_of_last_measurement = to_ms_since_boot(get_absolute_time());
-        printf("Measured freq:%d\n", measured_freq);
-        if(measured_freq < 50 || measured_freq > 150) {
-            sensor_errors++;
-        }
 
         //Clear interrupt
         pio_interrupt_clear(pio, 0);
@@ -74,7 +135,7 @@ void init_reciprocal_ctr_sm() {
     pio_sm_set_consecutive_pindirs(pio, GATE_SM, CTR_PIN, 2, true);
 
     //Configure the gate
-    uint gate_offset = pio_add_program(pio, &gate_program);
+    uint32_t gate_offset = pio_add_program(pio, &gate_program);
     pio_sm_config gate_config = gate_program_get_default_config(gate_offset);
     sm_config_set_in_pin_base(&gate_config, IN_PIN);
     //sm_config_set_in_pin_count(&gate_config, 1);
@@ -82,7 +143,7 @@ void init_reciprocal_ctr_sm() {
     sm_config_set_clkdiv(&gate_config, 1.0f);
 
     //Configure the input counter
-    uint ctr_offset = pio_add_program(pio, &counter_program);
+    uint32_t ctr_offset = pio_add_program(pio, &counter_program);
     pio_sm_config ctr_config = counter_program_get_default_config(ctr_offset);
     sm_config_set_in_pin_base(&ctr_config, GATE_PIN);
     //sm_config_set_in_pin_count(&ctr_config, 2);
@@ -91,7 +152,7 @@ void init_reciprocal_ctr_sm() {
     sm_config_set_clkdiv(&ctr_config, 1.0f);
 
     //Configure the ref clock
-    uint ref_offset = pio_add_program(pio, &ref_program);
+    uint32_t ref_offset = pio_add_program(pio, &ref_program);
     pio_sm_config ref_config = ref_program_get_default_config(ref_offset);
     sm_config_set_in_pin_base(&ref_config, CTR_PIN);
     //sm_config_set_in_pin_count(&ref_config, 1);
@@ -120,13 +181,13 @@ void init_reciprocal_ctr_sm() {
 }
 
 #ifdef INCLUDE_SQUARE
-void init_square_generator(uint pin) {
+void init_square_generator(uint32_t pin) {
     PIO pio = pio1;
     pio_gpio_init(pio, pin);
     pio_sm_set_consecutive_pindirs(pio, SQUARE_SM, pin, 1, true);
 
     //Configure the square test
-    uint square_offset = pio_add_program(pio, &square_program);
+    uint32_t square_offset = pio_add_program(pio, &square_program);
     pio_sm_config square_config = square_program_get_default_config(square_offset);
     sm_config_set_sideset_pins(&square_config, pin);
     sm_config_set_clkdiv(&square_config, CLOCK_FREQ / SQUARE_FREQ_DIVIDER);
@@ -136,7 +197,7 @@ void init_square_generator(uint pin) {
 #endif
 
 //Use this counter to cut down on the print statements
-uint counter = 0;
+uint32_t counter = 0;
 
 bool init_dac(){
     //Turn all channels off except for A
@@ -154,10 +215,9 @@ bool init_dac(){
 }
 
 bool update_voltage() {
-    if (sensor_errors > 0) {
+    if (eth_window_error_rate() > ETH_WINDOW_ERROR_THRESHOLD) {
         //write a 0
-        printf("Error: Invalid freq detected\n");
-        sensor_errors = 0;
+        printf("Error: Too many invalid sensor readings\n");
         return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
     } else if(to_ms_since_boot(get_absolute_time()) - time_of_last_measurement > 2000)
     {
@@ -165,18 +225,25 @@ bool update_voltage() {
         return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
     }
     else {
-        uint ethanol_percentage = measured_freq - 50;
+        float ethanol_percentage = avg_eth_window();
         //0% ethanol is .5V, 100% ethanol is 4.5V
+        // Make sure ethanol percentage is within correct range
+        if (ethanol_percentage < 0.0f) ethanol_percentage = 0.0f;
+        if (ethanol_percentage > 100.0f) ethanol_percentage = 100.0f;
         float voltage = ethanol_percentage * 4.0F / 100.0F + 0.5F;
         uint16_t dac_val = (uint16_t) (voltage * 4096.0F / 5.0F);
         //If divisible by 32 (last 5 digits are 0)
         if ((counter & 0x1F) == 0)
-            printf("freq: %d, eth: %d, voltage: %f, dac: %d\n", measured_freq, ethanol_percentage, voltage, dac_val);
+            printf("eth: %f, voltage: %f, dac: %d\n", ethanol_percentage, voltage, dac_val);
         return dev_mcp4728_set(i2c0, MCP4728_CHA, dac_val);
     }
 }
 
 int main() {
+    //Initialize freq window
+    for (uint32_t i = 0; i < ETH_WINDOW_LEN; i++) {
+        eth_measurement_window[i] = ETH_WINDOW_UNINITIALIZED;
+    }
     time_of_last_measurement = to_ms_since_boot(get_absolute_time());
     sys_i2c_init(i2c0, SYS_SDA0, SYS_SCL0, 100000, true);
     bool dac = init_dac();
