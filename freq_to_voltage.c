@@ -49,23 +49,29 @@ uint32_t irq = PIO0_IRQ_0;
 volatile uint32_t time_of_last_measurement = 0;
 uint32_t measurement_window[WINDOW_LEN];
 uint32_t measurement_window_cur = 0;
-volatile uint32_t measured_freq = 0;
-uint32_t valid_freq_floor = 0;
+volatile uint32_t measured_freq = 50;
+uint32_t valid_freq_floor = 50;
 uint32_t valid_freq_ceil = 150;
+volatile uint32_t num_errors = 0;
+
 
 //Adds a frequency to the window
 void put_window(uint32_t freq) {
+    //Don't waste window space on error state
     if(freq < 50 || freq > 150) {
-        freq = WINDOW_INVALID;
+        num_errors++;
+        return;
     }
     if (measurement_window_cur >= WINDOW_LEN) {
         measurement_window_cur = 0;
     }
-    measurement_window[measurement_window_cur++] = freq;
+    uint32_t idx = measurement_window_cur;
+    measurement_window_cur = (measurement_window_cur + 1) % WINDOW_LEN;
+    measurement_window[idx] = freq;
 }
 
 //Calculates the average of the window based on how many measurements are in it
-//Returns zero if there are no measurements
+//Returns 50 if there are no measurements
 float avg_window() {
     float sum = 0.0F;
     uint32_t valid = 0;
@@ -79,27 +85,7 @@ float avg_window() {
         }
     }
     restore_interrupts(status);
-    return valid > 0 ? sum / valid : 0;
-}
-
-//Calculates the error rate of the window
-float window_error_rate() {
-    float errors = 0.0F;
-    uint32_t total = 0;
-    // Pause interrupts so the ISR doesn't change data while we are reading it
-    uint32_t status = save_and_disable_interrupts(); 
-    for(uint32_t i = 0; i < WINDOW_LEN; i++) {
-        uint32_t eth = measurement_window[i];
-        if (eth != WINDOW_UNINITIALIZED) {
-            errors += eth == WINDOW_INVALID;
-            total++;
-        }
-    }
-    restore_interrupts(status);
-    //Return 0% error rate if we have less than 10 values
-    if (total < 10)
-        return 0.0f;
-    return total > 0 ? errors / total : 0;
+    return valid > 0 ? sum / valid : 50;
 }
 
 //Updates the valid floor and ceiling
@@ -138,6 +124,9 @@ void handle_isr() {
         if (freq > valid_freq_floor && freq < valid_freq_ceil) {
             time_of_last_measurement = to_ms_since_boot(get_absolute_time());
             measured_freq = freq;
+        } else {
+            //Treat invalid reading as error - if the reading really was valid it will repeat and the average will stabilize
+            num_errors++;
         }
 
         //Clear interrupt
@@ -235,28 +224,38 @@ bool init_dac(){
 }
 
 bool update_voltage() {
-    if (window_error_rate() > WINDOW_ERROR_THRESHOLD) {
-        //write a 0
-        printf("Error: Too many invalid sensor readings\n");
-        return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
-    } else if(to_ms_since_boot(get_absolute_time()) - time_of_last_measurement > 2000)
+    float ethanol_percentage;
+    //Get number of errors and clear them
+    uint32_t status = save_and_disable_interrupts();
+    uint32_t local_errors = num_errors;
+    uint32_t local_measured_freq = measured_freq;
+    uint32_t local_time_of_last_measurement = time_of_last_measurement;
+    num_errors = 0;
+    restore_interrupts(status);
+    if (local_errors > 0) {
+        printf("Error: Invalid readings detected\n");
+        //In this case we probably shouldn't trust the most recent reading. Send the average and then clear the errors
+        ethanol_percentage = avg_window() - 50;
+    } else if(to_ms_since_boot(get_absolute_time()) - local_time_of_last_measurement > 2000)
     {
+        //Send a zero if we lose the sensor entirely
         printf("Error: No signal from sensor\n");
-        return dev_mcp4728_set(i2c0, MCP4728_CHA, 0);
+        ethanol_percentage = 0;
     }
     else {
-        float ethanol_percentage = measured_freq - 50;
-        //0% ethanol is .5V, 100% ethanol is 4.5V
-        // Make sure ethanol percentage is within correct range
-        if (ethanol_percentage < 0.0f) ethanol_percentage = 0.0f;
-        if (ethanol_percentage > 100.0f) ethanol_percentage = 100.0f;
-        float voltage = ethanol_percentage * 4.0F / 100.0F + 0.5F;
-        uint16_t dac_val = (uint16_t) (voltage * 4096.0F / 5.0F);
-        //If divisible by 32 (last 5 digits are 0)
-        if ((counter & 0x1F) == 0)
-            printf("eth: %f, voltage: %f, dac: %d\n", ethanol_percentage, voltage, dac_val);
-        return dev_mcp4728_set(i2c0, MCP4728_CHA, dac_val);
+        //All is good, use most recent value
+        ethanol_percentage = local_measured_freq - 50;
     }
+    //0% ethanol is .5V, 100% ethanol is 4.5V
+    // Make sure ethanol percentage is within correct range
+    if (ethanol_percentage < 0.0f) ethanol_percentage = 0.0f;
+    if (ethanol_percentage > 100.0f) ethanol_percentage = 100.0f;
+    float voltage = ethanol_percentage * 4.0F / 100.0F + 0.5F;
+    uint16_t dac_val = (uint16_t) (voltage * 4096.0F / 5.0F);
+    //If divisible by 32 (last 5 digits are 0)
+    if ((counter & 0x1F) == 0)
+        printf("eth: %f, voltage: %f, dac: %d\n", ethanol_percentage, voltage, dac_val);
+    return dev_mcp4728_set(i2c0, MCP4728_CHA, dac_val);
 }
 
 int main() {
