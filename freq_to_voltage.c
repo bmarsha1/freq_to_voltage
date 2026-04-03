@@ -29,7 +29,7 @@
 #define WINDOW_LEN 600
 #define WINDOW_INVALID 151
 #define WINDOW_UNINITIALIZED 152
-#define WINDOW_ERROR_THRESHOLD 0.25F
+#define WINDOW_ERROR_THRESHOLD 0.20F
 //#define INCLUDE_SQUARE // Comment out to remove test square generator
 #define SQUARE_FREQ_DIVIDER 6200.0F //Generates 63Hz wave
 #define I2CERR //I2C error checking
