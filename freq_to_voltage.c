@@ -259,7 +259,7 @@ bool update_voltage() {
     if (ethanol_percentage < 0.0f) ethanol_percentage = 0.0f;
     if (ethanol_percentage > 100.0f) ethanol_percentage = 100.0f;
     float voltage = ethanol_percentage * 4.0F / 100.0F + 0.5F;
-    uint16_t dac_val = (uint16_t) (voltage * 4096.0F / 5.0F);
+    uint16_t dac_val = (uint16_t) (voltage * 4095.0F / 5.0F);
     //If divisible by 32 (last 5 digits are 0)
     if ((counter & 0x1F) == 0)
         printf("eth: %f, voltage: %f, dac: %d\n", ethanol_percentage, voltage, dac_val);
