@@ -119,15 +119,14 @@ void handle_isr() {
         }
     
         //Calculate the frequency
-        //Always write to the window, trust averaging to account for wild readings
         //Use 64 bit integer to avoid overflow
         uint64_t freq = ((input_count * CLOCK_FREQ) / ref_count);
-        put_window(freq);
 
-        //Only send the value if we decide that the measurement is valid
-        if (freq > valid_freq_floor && freq < valid_freq_ceil) {
+        //Only send the value if we decide that the measurement is valid or we don't have enough readings
+        if ((freq > valid_freq_floor && freq < valid_freq_ceil) || window_readings < 20) {
             time_of_last_measurement = to_ms_since_boot(get_absolute_time());
             measured_freq = freq;
+            put_window(freq);
         } else {
             //Treat invalid reading as error - if the reading really was valid it will repeat and the average will stabilize
             num_errors++;
