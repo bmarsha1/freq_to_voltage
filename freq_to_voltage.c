@@ -81,11 +81,13 @@ void put_window(uint64_t input_freq) {
 //Calculates the average of the window based on how many measurements are in it
 //Returns 50 if there are no measurements
 float avg_window() {
-    //No measurements, return 50
-    if(window_readings == 0)
-        return 50.0F;
     uint32_t status = save_and_disable_interrupts();
-    float result = (float) window_total / window_readings;
+    //No measurements, return 50
+    float result;
+    if(window_readings == 0)
+        result = 50.0F;
+    else
+        result = (float) window_total / window_readings;
     restore_interrupts(status);
     return result;
 }
