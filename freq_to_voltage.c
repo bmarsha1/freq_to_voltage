@@ -30,7 +30,7 @@
 #define WINDOW_UNINITIALIZED 152
 #define WINDOW_ERROR_THRESHOLD 0.20F
 //This cannot be set smaller than 2
-#define GATE_SAMPLES 3
+#define GATE_SAMPLES 5
 //#define INCLUDE_SQUARE // Comment out to remove test square generator
 #define SQUARE_FREQ_DIVIDER 6200.0F //Generates 63Hz wave
 #define I2CERR //I2C error checking
@@ -48,7 +48,7 @@ uint32_t irq = PIO0_IRQ_0;
 //Keep a rolling avg of measurements, use it to throw out bad readings
 //measurement_freq stores the most recent valid reading
 volatile uint32_t time_of_last_measurement = 0;
-uint32_t measurement_window[WINDOW_LEN];
+uint8_t measurement_window[WINDOW_LEN];
 uint32_t measurement_window_cur = 0;
 volatile uint32_t measured_freq = 50;
 uint32_t valid_freq_floor = 50;
@@ -57,9 +57,9 @@ volatile uint32_t num_errors = 0;
 
 
 //Adds a frequency to the window
-void put_window(uint32_t freq) {
+void put_window(uint64_t input_freq) {
     //Don't waste window space on error state
-    if(freq < 50 || freq > 150) {
+    if(input_freq < 50 || input_freq > 150) {
         num_errors++;
         return;
     }
@@ -68,7 +68,7 @@ void put_window(uint32_t freq) {
     }
     uint32_t idx = measurement_window_cur;
     measurement_window_cur = (measurement_window_cur + 1) % WINDOW_LEN;
-    measurement_window[idx] = freq;
+    measurement_window[idx] = (uint8_t)input_freq;
 }
 
 //Calculates the average of the window based on how many measurements are in it
@@ -79,7 +79,7 @@ float avg_window() {
     // Pause interrupts so the ISR doesn't change data while we are reading it
     uint32_t status = save_and_disable_interrupts(); 
     for(uint32_t i = 0; i < WINDOW_LEN; i++) {
-        uint32_t eth = measurement_window[i];
+        uint8_t eth = measurement_window[i];
         if (eth != WINDOW_INVALID && eth != WINDOW_UNINITIALIZED) {
             sum += eth;
             valid++;
@@ -106,9 +106,9 @@ void handle_isr() {
     if(pio_interrupt_get(pio, 0)) {
         //Get the data from the SMs
         //Need to subtract from max value since they count down
-        uint32_t input_count = 0xffffffff - pio_sm_get_blocking(pio, CTR_SM);
+        uint64_t input_count = 0xffffffff - pio_sm_get_blocking(pio, CTR_SM);
         //Loop takes 2 cycles
-        uint32_t ref_count = 2 * (0xffffffff - pio_sm_get_blocking(pio, REF_SM));
+        uint64_t ref_count = 2 * (0xffffffff - (uint64_t)pio_sm_get_blocking(pio, REF_SM));
         //This should never happen
         if (ref_count == 0) {
             pio_interrupt_clear(pio, 0);
@@ -118,7 +118,7 @@ void handle_isr() {
         //Calculate the frequency
         //Always write to the window, trust averaging to account for wild readings
         //Use 64 bit integer to avoid overflow
-        uint32_t freq = (uint32_t)(((uint64_t)input_count * CLOCK_FREQ) / ref_count);
+        uint64_t freq = (uint32_t)((input_count * CLOCK_FREQ) / ref_count);
         put_window(freq);
 
         //Only send the value if we decide that the measurement is valid
