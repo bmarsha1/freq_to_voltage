@@ -25,11 +25,12 @@
 #define CTR_SM 1
 #define REF_SM 2
 #define SQUARE_SM 3
-#define GATE_TIME 100000
 #define WINDOW_LEN 600
 #define WINDOW_INVALID 151
 #define WINDOW_UNINITIALIZED 152
 #define WINDOW_ERROR_THRESHOLD 0.20F
+//This cannot be set smaller than 2
+#define GATE_SAMPLES 3
 //#define INCLUDE_SQUARE // Comment out to remove test square generator
 #define SQUARE_FREQ_DIVIDER 6200.0F //Generates 63Hz wave
 #define I2CERR //I2C error checking
@@ -186,7 +187,10 @@ void init_reciprocal_ctr_sm() {
     //Set up all of the values
     pio_sm_put(pio, CTR_SM, 0xfffffffe); // Accounts for waiting for one extra rising edge after gate goes high
     pio_sm_put(pio, REF_SM, 0xffffffff);
-    pio_sm_put(pio, GATE_SM, GATE_TIME);
+
+    //Calculate the gate time by samples
+    uint32_t gate_time = CLOCK_FREQ * (GATE_SAMPLES - 1) / 50;
+    pio_sm_put(pio, GATE_SM, gate_time);
 }
 
 #ifdef INCLUDE_SQUARE
