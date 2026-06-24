@@ -122,7 +122,7 @@ void handle_isr() {
         //Calculate the frequency
         //Always write to the window, trust averaging to account for wild readings
         //Use 64 bit integer to avoid overflow
-        uint64_t freq = (uint32_t)((input_count * CLOCK_FREQ) / ref_count);
+        uint64_t freq = ((input_count * CLOCK_FREQ) / ref_count);
         put_window(freq);
 
         //Only send the value if we decide that the measurement is valid
