@@ -28,7 +28,7 @@
 #define WINDOW_LEN 600
 #define WINDOW_INVALID 151
 #define WINDOW_UNINITIALIZED 152
-#define WINDOW_ERROR_THRESHOLD 0.20F
+#define WINDOW_ERROR_THRESHOLD 0.10F
 //This cannot be set smaller than 2
 #define GATE_SAMPLES 5
 //#define INCLUDE_SQUARE // Comment out to remove test square generator
