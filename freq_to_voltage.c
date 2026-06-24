@@ -50,6 +50,8 @@ uint32_t irq = PIO0_IRQ_0;
 volatile uint32_t time_of_last_measurement = 0;
 uint8_t measurement_window[WINDOW_LEN];
 uint32_t measurement_window_cur = 0;
+volatile uint32_t window_readings = 0;
+volatile uint32_t window_total = 0;
 volatile uint32_t measured_freq = 50;
 uint32_t valid_freq_floor = 50;
 uint32_t valid_freq_ceil = 150;
@@ -68,25 +70,27 @@ void put_window(uint64_t input_freq) {
     }
     uint32_t idx = measurement_window_cur;
     measurement_window_cur = (measurement_window_cur + 1) % WINDOW_LEN;
+    //Remove the current value if it is valid
+    if(measurement_window[idx] != WINDOW_UNINITIALIZED) {
+        window_total -= measurement_window[idx];
+    }
     measurement_window[idx] = (uint8_t)input_freq;
+    window_total += measurement_window[idx];
+    //Update total measurements
+    if(window_readings < WINDOW_LEN)
+        window_readings++;
 }
 
 //Calculates the average of the window based on how many measurements are in it
 //Returns 50 if there are no measurements
 float avg_window() {
-    float sum = 0.0F;
-    uint32_t valid = 0;
-    // Pause interrupts so the ISR doesn't change data while we are reading it
-    uint32_t status = save_and_disable_interrupts(); 
-    for(uint32_t i = 0; i < WINDOW_LEN; i++) {
-        uint8_t eth = measurement_window[i];
-        if (eth != WINDOW_INVALID && eth != WINDOW_UNINITIALIZED) {
-            sum += eth;
-            valid++;
-        }
-    }
+    uint32_t status = save_and_disable_interrupts();
+    //No measurements, return 50
+    if(window_readings == 0)
+        return 50.0F;
+    float result = (float) window_total / window_readings;
     restore_interrupts(status);
-    return valid > 0 ? sum / valid : 50;
+    return result;
 }
 
 //Updates the valid floor and ceiling
