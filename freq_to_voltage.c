@@ -50,8 +50,8 @@ uint32_t irq = PIO0_IRQ_0;
 volatile uint32_t time_of_last_measurement = 0;
 uint8_t measurement_window[WINDOW_LEN];
 uint32_t measurement_window_cur = 0;
-volatile uint32_t window_readings = 0;
-volatile uint32_t window_total = 0;
+uint32_t window_readings = 0;
+uint32_t window_total = 0;
 volatile uint32_t measured_freq = 50;
 uint32_t valid_freq_floor = 50;
 uint32_t valid_freq_ceil = 150;
@@ -84,10 +84,10 @@ void put_window(uint64_t input_freq) {
 //Calculates the average of the window based on how many measurements are in it
 //Returns 50 if there are no measurements
 float avg_window() {
-    uint32_t status = save_and_disable_interrupts();
     //No measurements, return 50
     if(window_readings == 0)
         return 50.0F;
+    uint32_t status = save_and_disable_interrupts();
     float result = (float) window_total / window_readings;
     restore_interrupts(status);
     return result;
