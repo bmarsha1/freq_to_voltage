@@ -65,9 +65,6 @@ void put_window(uint64_t input_freq) {
         num_errors++;
         return;
     }
-    if (measurement_window_cur >= WINDOW_LEN) {
-        measurement_window_cur = 0;
-    }
     uint32_t idx = measurement_window_cur;
     measurement_window_cur = (measurement_window_cur + 1) % WINDOW_LEN;
     //Remove the current value if it is valid
