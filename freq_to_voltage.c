@@ -25,10 +25,10 @@
 #define CTR_SM 1
 #define REF_SM 2
 #define SQUARE_SM 3
-#define WINDOW_LEN 600
+#define WINDOW_LEN 300
 #define WINDOW_INVALID 151
 #define WINDOW_UNINITIALIZED 152
-#define WINDOW_ERROR_THRESHOLD 0.10F
+#define WINDOW_ERROR_DELTA 2
 //This cannot be set smaller than 2
 #define GATE_SAMPLES 5
 //#define INCLUDE_SQUARE // Comment out to remove test square generator
@@ -95,12 +95,11 @@ float avg_window() {
 //Updates the valid floor and ceiling
 void update_limits() {
     float average = avg_window();
-    float delta = average * WINDOW_ERROR_THRESHOLD;
-    float floor_float = average - delta;
+    float floor_float = average - WINDOW_ERROR_DELTA;
     // Pause interrupts so the ISR doesn't change data while we are reading it
     uint32_t status = save_and_disable_interrupts(); 
     valid_freq_floor = floor_float > 0 ? (uint32_t) floor_float : 0;
-    valid_freq_ceil = (uint32_t) (average + delta);
+    valid_freq_ceil = (uint32_t) (average + WINDOW_ERROR_DELTA);
     restore_interrupts(status);
 }
 
